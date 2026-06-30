@@ -7,6 +7,8 @@
 # Usage:
 #   ./upload_s3.sh
 #   ./upload_s3.sh --dry-run
+#   ./upload_s3.sh --folder Numbers_8s-2m55s
+#   ./upload_s3.sh --folder Animals_6s-4m20s --only-hls
 
 set -euo pipefail
 

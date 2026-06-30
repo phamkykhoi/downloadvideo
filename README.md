@@ -117,19 +117,74 @@ ffmpeg -y -i "downloads/Learn Different Holidays....mp4" \
   "downloads/Holidays_Kids_Beginners_6s-2m30s.mp4"
 ```
 
-### 2. Trích MP3 và tạo file `_vocal.mp4`
+### 2. Xử lý 1 bài (MP3 + vocal + HLS) — khuyến nghị
+
+Sau khi cắt, đặt file tại `downloads/<TEN_BAI>.mp4` rồi chạy **một lệnh**:
+
+```bash
+./process_lesson.sh Shapes_11s-2m35s
+```
+
+Chỉ cần đổi tên bài — ví dụ bài tiếp theo:
+
+```bash
+./process_lesson.sh Animals_6s-4m20s
+```
+
+Script sẽ tự làm 4 bước:
+
+1. Tạo `downloads/<TEN_BAI>.mp3`
+2. Tạo `downloads/<TEN_BAI>_vocal.mp4`
+3. Gom vào folder `downloads/<TEN_BAI>/`
+4. Băm HLS → `hls/` và `hls_vocal/`
+
+Kết quả:
+
+```
+downloads/Shapes_11s-2m35s/
+├── Shapes_11s-2m35s.mp4
+├── Shapes_11s-2m35s_vocal.mp4
+├── Shapes_11s-2m35s.mp3
+├── hls/index.m3u8 + seg_*.m4s
+└── hls_vocal/index.m3u8 + seg_*.m4s
+```
+
+**Ví dụ đầy đủ từ cắt → xử lý:**
+
+```bash
+# Bước 1: Cắt video (đổi thời gian và tên file)
+ffmpeg -y -i "downloads/Shapes in Mandarin Chinese for Toddlers Kids Beginners 形狀.mp4" \
+  -ss 00:00:11 -to 00:02:35 -c copy \
+  "downloads/Shapes_11s-2m35s.mp4"
+
+# Bước 2: MP3 + vocal + HLS
+./process_lesson.sh Shapes_11s-2m35s
+
+# Bước 3: Upload S3
+./upload_s3.sh
+```
+
+Đổi độ dài mỗi segment HLS (mặc định 6 giây):
+
+```bash
+HLS_TIME=10 ./process_lesson.sh Shapes_11s-2m35s
+```
+
+### 2b. Xử lý hàng loạt (nhiều file cùng lúc)
+
+Nếu có nhiều file `.mp4` trong `downloads/` và muốn xử lý tất cả:
+
+```bash
+./extract_mp3.sh downloads
+./prepare_hls.sh downloads
+```
 
 Mỗi file `Animals_6s-4m20s.mp4` tạo ra:
 
 - `Animals_6s-4m20s.mp3` — audio tách ra
 - `Animals_6s-4m20s_vocal.mp4` — video giữ nguyên giọng + nhạc nền
 
-```bash
-./extract_mp3.sh
-./extract_mp3.sh downloads
-```
-
-### 3. Băm HLS và gom vào folder từng bài
+### 3. Băm HLS và gom vào folder từng bài (chi tiết)
 
 Mỗi bài được chuyển vào folder riêng, kèm segment HLS (fMP4 `.m4s`, giữ codec gốc):
 
@@ -170,6 +225,7 @@ Upload toàn bộ folder bài học lên `Stories/LittleCat/Chinese/`:
 ```bash
 ./upload_s3.sh --dry-run   # xem trước danh sách file
 ./upload_s3.sh             # upload thật
+./upload_s3.sh --folder Numbers_8s-2m55s   # chỉ upload một folder
 ```
 
 Hoặc gọi trực tiếp PHP:
@@ -178,6 +234,8 @@ Hoặc gọi trực tiếp PHP:
 php upload_s3.php
 php upload_s3.php --dry-run
 php upload_s3.php --downloads downloads
+php upload_s3.php --folder Numbers_8s-2m55s
+php upload_s3.php --folder Numbers_8s-2m55s --folder Shapes_11s-2m35s
 ```
 
 Sau khi upload, URL stream HLS (lưu DB) có dạng:
@@ -192,9 +250,16 @@ Chỉ cần lưu URL `index.m3u8` — player tự tải `init.mp4` và các `seg
 ### Chạy nhanh toàn bộ pipeline
 
 ```bash
+# 1. Tải YouTube 1080p
 python youtube.py "https://www.youtube.com/watch?v=VIDEO_ID" 1080
-./extract_mp3.sh downloads
-./prepare_hls.sh downloads
+
+# 2. Cắt đoạn
+ffmpeg -y -i "downloads/video_goc.mp4" -ss 00:00:11 -to 00:02:35 -c copy "downloads/Shapes_11s-2m35s.mp4"
+
+# 3. MP3 + vocal + HLS (1 lệnh)
+./process_lesson.sh Shapes_11s-2m35s
+
+# 4. Upload S3
 ./upload_s3.sh
 ```
 
@@ -212,8 +277,9 @@ downloader/
 ├── tiktok.py           # Module download TikTok
 ├── instagram.py        # Module download Instagram
 ├── facebook.py         # Module download Facebook
-├── extract_mp3.sh      # Trích MP3 + _vocal.mp4
-├── prepare_hls.sh      # Băm HLS, gom folder bài học
+├── extract_mp3.sh      # Trích MP3 + _vocal (hàng loạt)
+├── process_lesson.sh   # MP3 + vocal + HLS (1 bài)
+├── prepare_hls.sh      # Băm HLS, gom folder (hàng loạt)
 ├── upload_s3.sh        # Upload lên Vietnix S3 (gọi upload_s3.php)
 ├── upload_s3.php       # Script upload S3 (PHP + curl)
 ├── .env.example        # Mẫu cấu hình S3
@@ -222,4 +288,71 @@ downloader/
 ```
 
 Videos sẽ được lưu vào thư mục `downloads/`
+
+## Mrs. Kelly's Class (MrKellyClass)
+
+### 1. Tách nhạc nền (`_vocal.mp4` — không giọng đọc)
+
+```bash
+pip install demucs
+./MrKellyClass/create_vocal_instrumental.sh
+```
+
+### 2. Băm HLS + HLS vocal
+
+Một bài:
+
+```bash
+./MrKellyClass/prepare_hls.sh 1-你好
+```
+
+Tất cả bài trong `cut/`:
+
+```bash
+./MrKellyClass/prepare_hls.sh
+```
+
+Kết quả:
+
+```
+MrKellyClass/cut/
+├── 1-你好.mp4
+├── 1-你好_vocal.mp4
+├── hls/1-你好/index.m3u8 + init.mp4 + seg_*.m4s
+└── hls_vocal/1-你好/index.m3u8 + init.mp4 + seg_*.m4s
+```
+
+Lệnh ffmpeg thủ công (cùng tham số với script):
+
+```bash
+BASE="1-你好"
+DIR="MrKellyClass/cut"
+HLS_TIME=6
+
+# Video gốc -> hls/
+ffmpeg -y -i "$DIR/${BASE}.mp4" \
+  -c:v libx264 -profile:v high -level 4.1 -pix_fmt yuv420p -crf 23 -preset medium \
+  -g 300 -keyint_min 300 -sc_threshold 0 \
+  -force_key_frames "expr:gte(t,n_forced*${HLS_TIME})" \
+  -c:a aac -b:a 128k -ar 44100 -ac 2 \
+  -af aresample=async=1:first_pts=0 \
+  -f hls -hls_time "$HLS_TIME" -hls_playlist_type vod \
+  -hls_segment_type fmp4 -hls_flags independent_segments \
+  -hls_fmp4_init_filename init.mp4 \
+  -hls_segment_filename "$DIR/hls/${BASE}/seg_%03d.m4s" \
+  "$DIR/hls/${BASE}/index.m3u8"
+
+# Nhạc nền -> hls_vocal/
+ffmpeg -y -i "$DIR/${BASE}_vocal.mp4" \
+  -c:v libx264 -profile:v high -level 4.1 -pix_fmt yuv420p -crf 23 -preset medium \
+  -g 300 -keyint_min 300 -sc_threshold 0 \
+  -force_key_frames "expr:gte(t,n_forced*${HLS_TIME})" \
+  -c:a aac -b:a 128k -ar 44100 -ac 2 \
+  -af aresample=async=1:first_pts=0 \
+  -f hls -hls_time "$HLS_TIME" -hls_playlist_type vod \
+  -hls_segment_type fmp4 -hls_flags independent_segments \
+  -hls_fmp4_init_filename init.mp4 \
+  -hls_segment_filename "$DIR/hls_vocal/${BASE}/seg_%03d.m4s" \
+  "$DIR/hls_vocal/${BASE}/index.m3u8"
+```
 

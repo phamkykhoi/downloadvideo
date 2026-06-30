@@ -8,6 +8,9 @@
  *   php upload_s3.php
  *   php upload_s3.php --dry-run
  *   php upload_s3.php --downloads downloads
+ *   php upload_s3.php --folder Numbers_8s-2m55s
+ *   php upload_s3.php --folder Numbers_8s-2m55s --folder Shapes_11s-2m35s
+ *   php upload_s3.php --folder Animals_6s-4m20s --only-hls
  */
 
 declare(strict_types=1);
@@ -177,28 +180,39 @@ function putObject(array $cfg, string $key, string $filePath, bool $dryRun): voi
     }
 
     $lastError = null;
+    $maxRetries = 3;
+    $httpCode = 0;
     foreach ($attempts as $attempt) {
         $signed = signPutRequest($cfg, $key, $type, $attempt['use_acl']);
 
-        $ch = curl_init($signed['url']);
-        curl_setopt_array($ch, [
-            CURLOPT_CUSTOMREQUEST => 'PUT',
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_HTTPHEADER => $signed['headers'],
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 0,
-        ]);
+        for ($try = 1; $try <= $maxRetries; $try++) {
+            $ch = curl_init($signed['url']);
+            curl_setopt_array($ch, [
+                CURLOPT_CUSTOMREQUEST => 'PUT',
+                CURLOPT_POSTFIELDS => $payload,
+                CURLOPT_HTTPHEADER => $signed['headers'],
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT => 30,
+                CURLOPT_TIMEOUT => 600,
+            ]);
 
-        $body = curl_exec($ch);
-        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
+            $body = curl_exec($ch);
+            $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            curl_close($ch);
 
-        if ($httpCode >= 200 && $httpCode < 300) {
-            return;
+            if ($httpCode >= 200 && $httpCode < 300) {
+                return;
+            }
+
+            $lastError = $curlError !== '' ? $curlError : "HTTP $httpCode: $body";
+            $retryable = $curlError !== '' || $httpCode === 0 || $httpCode >= 500;
+            if (!$retryable || $try === $maxRetries) {
+                break 2;
+            }
+            sleep($try * 2);
         }
 
-        $lastError = $curlError !== '' ? $curlError : "HTTP $httpCode: $body";
         if ($httpCode !== 400 && $httpCode !== 403) {
             break;
         }
@@ -229,6 +243,27 @@ function lessonDirs(string $downloads): array
     return $dirs;
 }
 
+function resolveLessonDirs(string $downloads, array $filterNames): array
+{
+    if ($filterNames === []) {
+        return lessonDirs($downloads);
+    }
+
+    $dirs = [];
+    foreach ($filterNames as $name) {
+        $name = basename(trim($name, '/'));
+        $path = $downloads . DIRECTORY_SEPARATOR . $name;
+        if (!is_dir($path)) {
+            fwrite(STDERR, "Không tìm thấy folder: $name (trong $downloads)\n");
+            exit(1);
+        }
+        $dirs[] = $path;
+    }
+    sort($dirs);
+
+    return $dirs;
+}
+
 function collectFiles(string $dir): array
 {
     $files = [];
@@ -251,10 +286,15 @@ function collectFiles(string $dir): array
 // --- main ---
 
 $dryRun = in_array('--dry-run', $argv, true);
+$onlyHls = in_array('--only-hls', $argv, true);
 $downloads = 'downloads';
+$filterFolders = [];
 foreach ($argv as $i => $arg) {
     if ($arg === '--downloads' && isset($argv[$i + 1])) {
         $downloads = $argv[$i + 1];
+    }
+    if ($arg === '--folder' && isset($argv[$i + 1])) {
+        $filterFolders[] = $argv[$i + 1];
     }
 }
 
@@ -266,7 +306,7 @@ if (!is_dir($downloads)) {
 $cfg = loadEnv(__DIR__ . '/.env');
 $baseKey = trim($cfg['VIETNIX_S3_BASE_KEY'], '/');
 $bucket = $cfg['VIETNIX_S3_BUCKET'];
-$folders = lessonDirs($downloads);
+$folders = resolveLessonDirs($downloads, $filterFolders);
 
 if ($folders === []) {
     fwrite(STDERR, "Không có folder bài học trong $downloads\n");
@@ -286,6 +326,9 @@ foreach ($folders as $lessonDir) {
     foreach (collectFiles($lessonDir) as $localFile) {
         $rel = substr($localFile, strlen($lessonDir) + 1);
         $rel = str_replace(DIRECTORY_SEPARATOR, '/', $rel);
+        if ($onlyHls && !str_starts_with($rel, 'hls/') && !str_starts_with($rel, 'hls_vocal/')) {
+            continue;
+        }
         $key = $baseKey . '/' . $lessonName . '/' . $rel;
 
         if (!$dryRun) {

@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .DS_Store
 downloads/
+MrKellyClass/cut/
+MrKellyClass/*.mp4
+MrKellyClass/*.log
+MrKellyClass/**/.demucs_tmp/
+karate_dev_*.sql

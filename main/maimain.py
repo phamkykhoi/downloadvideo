@@ -18,24 +18,27 @@ from facebook import download_facebook
 def main():
     """Hàm main để xử lý download video"""
     if len(sys.argv) < 3:
-        print("Cách sử dụng: python main/maimain.py <platform> <url> [720|1080]")
+        print("Cách sử dụng: python main/maimain.py <platform> <url> [720|1080] [thư_mục_lưu]")
         print("Platforms: youtube, tiktok, instagram, facebook")
-        print("Ví dụ: python main/maimain.py youtube https://www.youtube.com/watch?v=... 1080")
+        print("Ví dụ: python main/maimain.py youtube https://www.youtube.com/watch?v=... 1080 MrKellyClass")
         sys.exit(1)
     
     platform = sys.argv[1].lower()
     url = sys.argv[2]
     max_height = 1080
-    if len(sys.argv) >= 4 and platform == "youtube":
-        try:
-            max_height = int(sys.argv[3])
-        except ValueError:
-            print("Chất lượng YouTube phải là 720 hoặc 1080")
-            sys.exit(1)
+    output_path = "downloads"
+    extra = sys.argv[3:]
+    if platform == "youtube" and extra:
+        if extra[0] in ('720', '1080'):
+            max_height = int(extra[0])
+            if len(extra) >= 2:
+                output_path = extra[1]
+        else:
+            output_path = extra[0]
     
     try:
         if platform == "youtube":
-            download_youtube(url, max_height=max_height)
+            download_youtube(url, output_path=output_path, max_height=max_height)
         elif platform == "tiktok":
             download_tiktok(url)
         elif platform == "instagram":

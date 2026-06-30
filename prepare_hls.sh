@@ -33,7 +33,11 @@ create_hls() {
   echo "    HLS $label -> $(basename "$output_dir")/"
 
   ffmpeg -y -hide_banner -loglevel error -i "$input" \
-    -c copy \
+    -c:v libx264 -profile:v high -level 4.1 -pix_fmt yuv420p -crf 23 -preset medium \
+    -g 300 -keyint_min 300 -sc_threshold 0 \
+    -force_key_frames "expr:gte(t,n_forced*${HLS_TIME})" \
+    -c:a aac -b:a 128k -ar 44100 -ac 2 \
+    -af aresample=async=1:first_pts=0 \
     -f hls \
     -hls_time "$HLS_TIME" \
     -hls_playlist_type vod \

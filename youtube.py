@@ -85,6 +85,47 @@ def _cookie_label(cookie_opts):
     return 'no-cookies'
 
 
+def _iter_entries(info):
+    """Trả về từng video — 1 entry nếu URL đơn, nhiều entry nếu playlist."""
+    if info.get('_type') == 'playlist' or info.get('entries'):
+        for entry in info.get('entries') or []:
+            if entry:
+                yield entry
+    else:
+        yield info
+
+
+def _find_downloaded_file(output_path, video_id, downloaded_file=None):
+    if downloaded_file and os.path.exists(downloaded_file):
+        return downloaded_file
+    for ext in ('mp4', 'mkv', 'webm'):
+        candidate = os.path.join(output_path, f'{video_id}.{ext}')
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _finalize_video(output_path, entry, downloaded_file=None, is_playlist=False):
+    video_id = entry.get('id', 'video')
+    title = sanitize_title(entry.get('title', video_id))
+    src = _find_downloaded_file(output_path, video_id, downloaded_file)
+    if not src:
+        return None
+
+    if is_playlist:
+        idx = entry.get('playlist_index') or 0
+        name = f'{idx:03d} - {title}.mp4'
+    else:
+        name = f'{title}.mp4'
+
+    target = os.path.join(output_path, name)
+    if src != target:
+        if os.path.exists(target):
+            os.remove(target)
+        os.rename(src, target)
+    return target
+
+
 def download_youtube(url, output_path="downloads", max_height=1080):
     """
     Download video từ YouTube
@@ -95,7 +136,7 @@ def download_youtube(url, output_path="downloads", max_height=1080):
         max_height: Độ phân giải tối đa (720 hoặc 1080, mặc định: 1080)
 
     Returns:
-        Đường dẫn file đã download
+        Đường dẫn file (URL đơn) hoặc danh sách đường dẫn (playlist)
     """
     if max_height not in (720, 1080):
         max_height = 1080
@@ -104,13 +145,17 @@ def download_youtube(url, output_path="downloads", max_height=1080):
         os.makedirs(output_path)
 
     downloaded_file = None
+    current_video_id = None
 
     def progress_hook(d):
-        nonlocal downloaded_file
+        nonlocal downloaded_file, current_video_id
+        if d['status'] == 'downloading' and d.get('info_dict'):
+            current_video_id = d['info_dict'].get('id')
         if d['status'] == 'finished':
             downloaded_file = d.get('filename')
 
     last_error = None
+    is_playlist_url = 'list=' in url
 
     try:
         for cookie_opts in _get_cookie_opts_list():
@@ -121,31 +166,34 @@ def download_youtube(url, output_path="downloads", max_height=1080):
                     ydl_opts = _build_ydl_opts(
                         output_path, progress_hook, player_clients, cookie_opts, max_height
                     )
+                    if is_playlist_url:
+                        ydl_opts['ignoreerrors'] = True
 
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        print(f"Đang download ({max_height}p, cookies={cookie_name}): {url}")
+                        label = 'playlist' if is_playlist_url else 'video'
+                        print(f"Đang download {label} ({max_height}p, cookies={cookie_name}): {url}")
                         info = ydl.extract_info(url, download=True)
-                        height = info.get('height') or 'unknown'
-                        print(f"Download thành công! ({height}p)")
 
-                        title = sanitize_title(info.get('title', 'video'))
-                        final_file = downloaded_file
+                        entries = list(_iter_entries(info))
+                        is_playlist = len(entries) > 1 or info.get('_type') == 'playlist'
+                        results = []
 
-                        if not final_file or not os.path.exists(final_file):
-                            video_id = info.get('id', 'video')
-                            for ext in ('mp4', 'mkv', 'webm'):
-                                candidate = os.path.join(output_path, f'{video_id}.{ext}')
-                                if os.path.exists(candidate):
-                                    final_file = candidate
-                                    break
+                        for entry in entries:
+                            vid = entry.get('id', '?')
+                            height = entry.get('height') or 'unknown'
+                            path = _finalize_video(
+                                output_path, entry, downloaded_file if vid == current_video_id else None, is_playlist
+                            )
+                            if path:
+                                results.append(path)
+                                print(f"  ✓ [{len(results)}/{len(entries)}] {os.path.basename(path)} ({height}p)")
+                            else:
+                                print(f"  ✗ Bỏ qua: {entry.get('title', vid)}")
+                            downloaded_file = None
 
-                        if final_file and os.path.exists(final_file):
-                            target_file = os.path.join(output_path, f'{title}.mp4')
-                            if final_file != target_file:
-                                if os.path.exists(target_file):
-                                    os.remove(target_file)
-                                os.rename(final_file, target_file)
-                            return target_file
+                        if results:
+                            print(f"Download thành công {len(results)}/{len(entries)} video!")
+                            return results[0] if len(results) == 1 else results
                         return None
 
                 except Exception as e:
@@ -175,15 +223,18 @@ def download_youtube(url, output_path="downloads", max_height=1080):
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("Cách sử dụng: python youtube.py <url> [720|1080]")
+        print("Cách sử dụng: python youtube.py <url> [720|1080] [thư_mục_lưu]")
         sys.exit(1)
 
     quality = 1080
-    if len(sys.argv) >= 3:
-        try:
-            quality = int(sys.argv[2])
-        except ValueError:
-            print("Chất lượng phải là 720 hoặc 1080")
-            sys.exit(1)
+    output_path = "downloads"
+    args = sys.argv[1:]
 
-    download_youtube(sys.argv[1], max_height=quality)
+    if len(args) >= 2 and args[1] in ('720', '1080'):
+        quality = int(args[1])
+        if len(args) >= 3:
+            output_path = args[2]
+    elif len(args) >= 2:
+        output_path = args[1]
+
+    download_youtube(args[0], output_path=output_path, max_height=quality)
